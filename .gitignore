@@ -1,4 +1,5 @@
+*.lock
 /target
-/Cargo.lock
+
 /safetensors_input/consolidated.safetensors
 /.idea/
