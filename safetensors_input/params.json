@@ -1,0 +1,51 @@
+{
+  "dim": 5120,
+  "n_layers": 40,
+  "head_dim": 128,
+  "hidden_dim": 16384,
+  "n_heads": 32,
+  "n_kv_heads": 8,
+  "rope_theta": 1000000000.0,
+  "norm_eps": 1e-05,
+  "vocab_size": 131072,
+  "tied_embeddings": false,
+  "max_position_embeddings": 262144,
+  "llama_4_scaling": {
+    "original_max_position_embeddings": 16384,
+    "beta": 0.1
+  },
+  "q_lora_rank": null,
+  "qk_rope_head_dim": null,
+  "qk_nope_head_dim": null,
+  "kv_lora_rank": null,
+  "v_head_dim": null,
+  "quantization": {
+    "qformat_weight": "fp8_e4m3",
+    "qscheme_act": "TENSOR"
+  },
+  "yarn": {
+    "original_max_position_embeddings": 16384,
+    "factor": 16,
+    "apply_scale": false,
+    "beta": 32,
+    "alpha": 1
+  },
+  "vision_encoder": {
+    "image_token_id": 10,
+    "image_break_token_id": 12,
+    "image_end_token_id": 13,
+    "intermediate_size": 4096,
+    "num_hidden_layers": 24,
+    "num_attention_heads": 16,
+    "mm_projector_id": "patch_merge",
+    "spatial_merge_size": 2,
+    "hidden_size": 1024,
+    "num_channels": 3,
+    "image_size": 1540,
+    "max_image_size": 1540,
+    "patch_size": 14,
+    "rope_theta": 10000.0,
+    "add_pre_mm_projector_layer_norm": true,
+    "adapter_bias": false
+  }
+}

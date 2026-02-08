@@ -1,0 +1,17 @@
+[package]
+name = "rust_safetensors_to_onnx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+safetensors = "0.7.0"
+protoc = "3.0.0-alpha.5"
+prost = "0.14.3"
+prost-types = "0.14.3"
+bytes = "1.11.1"
+anyhow = "1.0.101"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+
+[build-dependencies]
+prost-build = "0.14.3"
