@@ -1,4 +1,4 @@
-#.safetensors to ONNX 
+# Convert .safetensors model to ONNX model
 #### without Python
 
 Work in progress. It builds.
