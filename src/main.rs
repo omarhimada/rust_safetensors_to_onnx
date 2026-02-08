@@ -687,8 +687,11 @@ fn main() -> Result<()> {
     let model = onnx::ModelProto {
         ir_version: Some(9i64),
         opset_import: vec![onnx::OperatorSetIdProto {
-            domain: Some("ai.onnx;com.microsoft.v1".to_string()),
+            domain: Some("ai.onnx".to_string()),
             version: Some(21i64),
+        }, onnx::OperatorSetIdProto {
+               domain: Some("com.microsoft".to_string()),
+               version: Some(1i64),
         }],
         graph: Some(graph),
         ..Default::default()
