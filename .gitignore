@@ -5,3 +5,9 @@
 /.idea/
 /safetensors_input/consolidated.onnx
 /safetensors_input/consolidated.onnx_data
+/.vs/rust_safetensors_to_onnx.slnx/v18/.wsuo
+/.vs/rust_safetensors_to_onnx.slnx/v18/DocumentLayout.json
+/.vs/ProjectSettings.json
+/.vs/slnx.sqlite
+/.vs/VSWorkspaceState.json
+/.vs/rust_safetensors_to_onnx/v18/workspaceFileList.bin
