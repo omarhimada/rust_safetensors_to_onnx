@@ -1,5 +1,4 @@
-# Convert .safetensors model to ONNX model
-#### without Python
+# Convert safetensors ➜ ONNX with Rust
 
 Work in progress. It builds.
 
@@ -11,5 +10,4 @@ Work in progress. It builds.
 4. Build the node graph automatically from the manifest. 
 5. Serialize model.onnx in the same directory.
 
-All of this is pure Rust—no Python required.
-
+All of this is pure Rust, no Python required.
