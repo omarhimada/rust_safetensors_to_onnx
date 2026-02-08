@@ -1,3 +1,8 @@
+#.safetensors to ONNX 
+#### without Python
+
+Work in progress. It builds.
+
 `cargo run --release -- path/to/model.safetensors`
 
 1. Read model.safetensors. 
