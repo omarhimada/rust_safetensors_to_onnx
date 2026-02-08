@@ -19,5 +19,5 @@
   - Simply copied the typical Mistral structure expected in `genai_config.json` when loaded with `OnnxRuntimeGenAI`
 
 - Excluded from GitHub due to file size:
-- `consolidated.safetensors`
-- Generated `consolidated.onnx` and `consolidated.onnx_data` due to file size.
+  - `consolidated.safetensors`
+  - Generated `consolidated.onnx` and `consolidated.onnx_data` due to file size.
