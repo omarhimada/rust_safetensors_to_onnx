@@ -494,8 +494,12 @@ fn main() -> Result<()> {
     let tensors = SafeTensors::deserialize(&mmap).context("parse safetensors file")?;
 
     // Output paths
-    let out_path = Path::new(safetensors_path).with_extension("onnx");
-    let data_path = out_path.with_extension("onnx_data");
+    let base_dir = Path::new(&safetensors_path)
+        .parent()
+        .context("Unknown parent directory")?;
+
+    let out_path  = base_dir.join("model.onnx");
+    let data_path = base_dir.join("model.onnx_data");
 
     // Create external data file
     let mut data_file =
@@ -675,7 +679,7 @@ fn main() -> Result<()> {
     graph_outputs.extend(kv_outputs);
 
     let graph = onnx::GraphProto {
-        name: Some("converted_model".to_string()),
+        name: Some("main_graph".to_string()),
         node: nodes,
         input: graph_inputs,
         output: graph_outputs,
