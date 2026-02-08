@@ -3,3 +3,5 @@
 
 /safetensors_input/consolidated.safetensors
 /.idea/
+/safetensors_input/consolidated.onnx
+/safetensors_input/consolidated.onnx_data
