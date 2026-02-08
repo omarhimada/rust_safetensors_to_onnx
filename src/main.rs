@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use serde_json::to_string;
 
 mod onnx {
     include!(concat!(env!("OUT_DIR"), "/onnx.rs"));
@@ -54,6 +55,49 @@ struct RopeParameters {
 // ONNX graph helpers
 // -----------------------------
 
+fn emit_position_ids(
+    prefix: &str,
+    input_ids: &str,
+    past_seq: &str,
+) -> (String, Vec<onnx::NodeProto>) {
+    let mut nodes = Vec::new();
+
+    // Shapes
+    let input_shape = format!("{prefix}_input_shape");
+    nodes.push(node("Shape", vec![input_ids.into()], vec![input_shape.clone()]));
+
+    // Extract sequence_length = shape[1]
+    let seq_len = format!("{prefix}_seq_len");
+    nodes.push(onnx::NodeProto {
+        op_type: Some("Gather".into()),
+        input: vec![input_shape.clone(), "const_one".into()],
+        output: vec![seq_len.clone()],
+        attribute: vec![attr_int("axis", 0)],
+        ..Default::default()
+    });
+
+    // Range(0, seq_len, 1)
+    let zero = format!("{prefix}_zero");
+    let one  = format!("{prefix}_one");
+    let range = format!("{prefix}_range");
+
+    nodes.push(node("Constant", vec![], vec![zero.clone()]));
+    nodes.push(node("Constant", vec![], vec![one.clone()]));
+
+    nodes.push(onnx::NodeProto {
+        op_type: Some("Range".into()),
+        input: vec![zero.clone(), seq_len.clone(), one.clone()],
+        output: vec![range.clone()],
+        ..Default::default()
+    });
+
+    // position_ids = range + past_sequence_length
+    let pos_ids = format!("{prefix}_position_ids");
+    nodes.push(node("Add", vec![range, past_seq.into()], vec![pos_ids.clone()]));
+
+    (pos_ids, nodes)
+}
+
 fn value_info_tensor(
     name: &str,
     elem_type: i32,
@@ -72,6 +116,43 @@ fn value_info_tensor(
         }),
         ..Default::default()
     }
+}
+
+fn head_dim_from_cfg(hidden_size: usize, num_attention_heads: usize) -> i64 {
+    // Trust arithmetic over optional config head_dim (your JSON is internally inconsistent).
+    (hidden_size / num_attention_heads) as i64
+}
+
+fn dim_param(s: &str) -> onnx::tensor_shape_proto::Dimension {
+    onnx::tensor_shape_proto::Dimension {
+        value: Some(onnx::tensor_shape_proto::dimension::Value::DimParam(s.to_string())),
+        ..Default::default()
+    }
+}
+
+fn dim_value(v: i64) -> onnx::tensor_shape_proto::Dimension {
+    onnx::tensor_shape_proto::Dimension {
+        value: Some(onnx::tensor_shape_proto::dimension::Value::DimValue(v)),
+        ..Default::default()
+    }
+}
+fn kv_cache_value_info(
+    name: &str,
+    elem_type: i32,
+    num_kv_heads: i64,
+    head_dim: i64,
+    past_dim: &str, // "past_sequence_length"
+) -> onnx::ValueInfoProto {
+    value_info_tensor(
+        name,
+        elem_type,
+        vec![
+            dim_param("batch"),
+            dim_value(num_kv_heads),
+            dim_param(past_dim),
+            dim_value(head_dim),
+        ],
+    )
 }
 
 fn node(op: &str, inputs: Vec<String>, outputs: Vec<String>) -> onnx::NodeProto {
@@ -451,6 +532,23 @@ fn main() -> Result<()> {
             &mut cursor,
             &mut data_file,
         )?);
+
+        // int64 constants used by position_ids logic
+        initializers.push(onnx::TensorProto {
+            name: Some("const_zero".into()),
+            data_type: Some(onnx::tensor_proto::DataType::Int64 as i32),
+            dims: vec![],
+            int64_data: vec![0],
+            ..Default::default()
+        });
+
+        initializers.push(onnx::TensorProto {
+            name: Some("const_one".into()),
+            data_type: Some(onnx::tensor_proto::DataType::Int64 as i32),
+            dims: vec![],
+            int64_data: vec![1],
+            ..Default::default()
+        });
     }
 
     // Load model config.json (same directory as consolidated.safetensors)
@@ -466,6 +564,12 @@ fn main() -> Result<()> {
     // Global RMS eps initializer
     let eps_name = "rms_eps".to_string();
     initializers.push(const_scalar_f32(&eps_name, cfg_parsed.rms_norm_eps as f32));
+
+    // Build position_ids = arange(seq_len) + past_sequence_length
+    let (position_ids, mut pos_nodes) =
+        emit_position_ids("pos", "input_ids", "past_sequence_length");
+
+    nodes.append(&mut pos_nodes);
 
     // Embedding Gather: x = Gather(embed_tokens.weight, input_ids)
     let mut x = "x".to_string();
@@ -509,20 +613,6 @@ fn main() -> Result<()> {
         vec!["logits".to_string()],
     ));
 
-    // Shape dims helpers
-    fn dim_param(s: &str) -> onnx::tensor_shape_proto::Dimension {
-        onnx::tensor_shape_proto::Dimension {
-            value: Some(onnx::tensor_shape_proto::dimension::Value::DimParam(s.to_string())),
-            ..Default::default()
-        }
-    }
-    fn dim_value(v: i64) -> onnx::tensor_shape_proto::Dimension {
-        onnx::tensor_shape_proto::Dimension {
-            value: Some(onnx::tensor_shape_proto::dimension::Value::DimValue(v)),
-            ..Default::default()
-        }
-    }
-
     // Graph inputs / outputs
     let input_ids = value_info_tensor(
         "input_ids",
@@ -536,34 +626,69 @@ fn main() -> Result<()> {
         vec![dim_param("batch"), dim_param("seq")],
     );
 
-    let position_ids = value_info_tensor(
-        "position_ids",
-        onnx::tensor_proto::DataType::Int64 as i32,
-        vec![dim_param("batch"), dim_param("seq")],
-    );
+    // ---- KV cache IOs (past_key_values_0..39) ----
+    let num_layers = cfg.text_config.num_hidden_layers;     // if you adopted nested config
+    let num_kv = cfg.text_config.num_key_value_heads as i64;
+    let head_dim = head_dim_from_cfg(cfg.text_config.hidden_size, cfg.text_config.num_attention_heads);
+
+    let kv_elem_type = onnx::tensor_proto::DataType::Bfloat16 as i32; // your weights are bf16
+    // If your runtime expects FP16 cache, change to Float16.
+
+    let mut kv_inputs: Vec<onnx::ValueInfoProto> = Vec::new();
+    let mut kv_outputs: Vec<onnx::ValueInfoProto> = Vec::new();
+
+    for i in 0..num_layers {
+        // Names: adjust to match what ORT GenAI expects in your “old mistral”.
+        // Common patterns are shown below.
+
+        // Pattern A (common): "past_key_values.{i}.key" / ".value"
+        let past_k = format!("past_key_values.{i}.key");
+        let past_v = format!("past_key_values.{i}.value");
+        let present_k = format!("present_key_values.{i}.key");
+        let present_v = format!("present_key_values.{i}.value");
+
+        kv_inputs.push(kv_cache_value_info(&past_k, kv_elem_type, num_kv, head_dim, "past_sequence_length"));
+        kv_inputs.push(kv_cache_value_info(&past_v, kv_elem_type, num_kv, head_dim, "past_sequence_length"));
+
+        // For outputs, many exports use "total_sequence_length" (past + current).
+        // If you prefer a single symbolic dim, use "past_sequence_length" and update later.
+        kv_outputs.push(kv_cache_value_info(&present_k, kv_elem_type, num_kv, head_dim, "total_sequence_length"));
+        kv_outputs.push(kv_cache_value_info(&present_v, kv_elem_type, num_kv, head_dim, "total_sequence_length"));
+    }
 
     let logits = value_info_tensor(
         "logits",
         onnx::tensor_proto::DataType::Float as i32,
-        vec![dim_param("batch"), dim_param("seq"), dim_value(cfg_parsed.vocab_size as i64)],
+        vec![dim_param("batch"), dim_param("sequence_length"), dim_value(cfg_parsed.vocab_size as i64)],
     );
 
-    // Assemble GraphProto
+    let past_sequence_length = value_info_tensor(
+        "past_sequence_length",
+        onnx::tensor_proto::DataType::Int64 as i32,
+        vec![], // scalar
+    );
+
+    let mut graph_inputs = vec![input_ids, attention_mask, past_sequence_length];
+    graph_inputs.extend(kv_inputs);
+
+    let mut graph_outputs = vec![logits];
+    graph_outputs.extend(kv_outputs);
+
     let graph = onnx::GraphProto {
         name: Some("converted_model".to_string()),
         node: nodes,
-        input: vec![input_ids, attention_mask, position_ids],
-        output: vec![logits],
+        input: graph_inputs,
+        output: graph_outputs,
         initializer: initializers,
         ..Default::default()
     };
 
     // Assemble ModelProto
     let model = onnx::ModelProto {
-        ir_version: Some(7i64),
+        ir_version: Some(9i64),
         opset_import: vec![onnx::OperatorSetIdProto {
-            domain: Some("ai.onnx".to_string()),
-            version: Some(17i64),
+            domain: Some("ai.onnx;com.microsoft.v1".to_string()),
+            version: Some(21i64),
         }],
         graph: Some(graph),
         ..Default::default()
